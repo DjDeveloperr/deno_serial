@@ -1,4 +1,3 @@
-import { Struct } from "../../deps.ts";
 import {
   ClearBuffer,
   DataBits,
@@ -8,164 +7,199 @@ import {
   SerialPort,
   StopBits,
 } from "../common/serial_port.ts";
-import {
-  CancelIoEx,
-  ClearCommBreak,
-  ClearCommError,
-  CloseHandle,
-  COMMSTAT,
-  COMMTIMEOUTS,
-  CreateFileA,
-  EscapeCommFunction,
-  FILE_ATTRIBUTE_NORMAL,
-  FILE_FLAG_OVERLAPPED,
-  FlushFileBuffers,
-  GENERIC_READ,
-  GENERIC_WRITE,
-  GetCommModemStatus,
-  GetCommState,
-  GetOverlappedResult,
-  HANDLE,
-  LPDCB,
-  LPOVERLAPPED,
-  OPEN_EXISTING,
-  OVERLAPPED,
-  PurgeComm,
-  ReadFile,
-  SetCommBreak,
-  SetCommState,
-  SetCommTimeouts,
-  WriteFile,
-} from "./winapi/mod.ts";
+import { Comm, Foundation, Fs, OverlappedPromise, unwrap } from "./deps.ts";
 
-function flowControlToDcb(flowControl: FlowControl, dcb: LPDCB) {
-  switch (flowControl) {
-    case FlowControl.NONE:
-      dcb.fOutxCtsFlow = 0;
-      dcb.fRtsControl = 0;
-      dcb.fOutX = 0;
-      dcb.fInX = 0;
-      break;
-    case FlowControl.SOFTWARE:
-      dcb.fOutxCtsFlow = 1;
-      dcb.fRtsControl = 0;
-      dcb.fOutX = 0;
-      dcb.fInX = 0;
-      break;
-    case FlowControl.HARDWARE:
-      dcb.fOutxCtsFlow = 0;
-      dcb.fRtsControl = 2;
-      dcb.fOutX = 0;
-      dcb.fInX = 0;
-      break;
+// deno-fmt-ignore
+const         fBinary = 0b0000_0000_0000_0001;
+// deno-fmt-ignore
+const         fParity = 0b0000_0000_0000_0010;
+// deno-fmt-ignore
+const    fOutxCtsFlow = 0b0000_0000_0000_0100;
+// deno-fmt-ignore
+const    fOutxDsrFlow = 0b0000_0000_0000_1000;
+// deno-fmt-ignore
+const    fDtrControl0 = 0b0000_0000_0001_0000;
+// deno-fmt-ignore
+const    fDtrControl1 = 0b0000_0000_0010_0000;
+// deno-fmt-ignore
+const fDsrSensitivity = 0b0000_0000_0100_0000;
+// deno-fmt-ignore
+const           fOutX = 0b0000_0001_0000_0000;
+// deno-fmt-ignore
+const            fInX = 0b0000_0010_0000_0000;
+// deno-fmt-ignore
+const      fErrorChar = 0b0000_0100_0000_0000;
+// deno-fmt-ignore
+const           fNull = 0b0000_1000_0000_0000;
+// deno-fmt-ignore
+const    fRtsControl0 = 0b0001_0000_0000_0000;
+// deno-fmt-ignore
+const    fRtsControl1 = 0b0010_0000_0000_0000;
+// deno-fmt-ignore
+const     fRtsControl = 0b0011_0000_0000_0000;
+// deno-fmt-ignore
+const   fAbortOnError = 0b0100_0000_0000_0000;
+
+function getbit(bits: number, bit: number) {
+  return (bits & bit) === bit;
+}
+
+function setbit(bits: number, bit: number, value: boolean) {
+  if (value) {
+    return bits | bit;
+  } else {
+    return bits & ~bit;
   }
 }
 
-function dcbToFlowControl(dcb: LPDCB) {
-  if (dcb.fOutxCtsFlow) {
+function flowControlToDcb(flowControl: FlowControl, dcb: Comm.DCBView) {
+  let bits = dcb._bitfield;
+  switch (flowControl) {
+    case FlowControl.NONE:
+      bits = setbit(bits, fOutxCtsFlow, false);
+      bits = setbit(bits, fRtsControl0, false);
+      bits = setbit(bits, fRtsControl1, false);
+      bits = setbit(bits, fOutX, false);
+      bits = setbit(bits, fInX, false);
+      break;
+    case FlowControl.SOFTWARE:
+      bits = setbit(bits, fOutxCtsFlow, true);
+      bits = setbit(bits, fRtsControl0, false);
+      bits = setbit(bits, fRtsControl1, false);
+      bits = setbit(bits, fOutX, true);
+      bits = setbit(bits, fInX, true);
+      break;
+    case FlowControl.HARDWARE:
+      bits = setbit(bits, fOutxCtsFlow, false);
+      bits = setbit(bits, fRtsControl0, true);
+      bits = setbit(bits, fRtsControl1, false);
+      bits = setbit(bits, fOutX, false);
+      bits = setbit(bits, fInX, false);
+      break;
+  }
+  dcb._bitfield = bits;
+}
+
+function dcbToFlowControl(dcb: Comm.DCBView) {
+  const bits = dcb._bitfield;
+  if (getbit(bits, fOutxCtsFlow)) {
     return FlowControl.SOFTWARE;
-  } else if (dcb.fRtsControl === 2) {
+  } else if (getbit(bits, fRtsControl0)) {
     return FlowControl.HARDWARE;
   } else {
     return FlowControl.NONE;
   }
 }
 
+const comstat = Comm.allocCOMSTAT();
+
 export class SerialPortWin implements SerialPort {
-  #handle: HANDLE;
+  #handle: Deno.PointerValue;
   #timeout = 100;
 
   readonly name?: string;
 
+  #_dcb: Comm.DCBView;
+
   constructor(options: SerialOpenOptions) {
-    this.#handle = CreateFileA(
+    this.#handle = Fs.CreateFileA(
       "\\\\.\\" + options.name,
-      GENERIC_READ | GENERIC_WRITE,
+      Fs.FILE_GENERIC_READ | Fs.FILE_GENERIC_WRITE,
       0,
+      0,
+      Fs.OPEN_EXISTING,
+      Fs.FILE_ATTRIBUTE_NORMAL | Fs.FILE_FLAG_OVERLAPPED,
       null,
-      OPEN_EXISTING,
-      FILE_FLAG_OVERLAPPED | FILE_ATTRIBUTE_NORMAL,
-      null,
-    );
+    )!;
 
     this.name = options.name;
-    const dcb = GetCommState(this.#handle);
-    dcb.XonChar = 17;
-    dcb.XoffChar = 19;
-    dcb.ErrorChar = 0;
-    dcb.EofChar = 26;
-    dcb.fBinary = 1;
-    dcb.fOutxDsrFlow = 0;
-    dcb.fDtrControl = 0;
-    dcb.fDsrSensitivity = 0;
-    dcb.fErrorChar = 0;
-    dcb.fNull = 0;
-    dcb.fAbortOnError = 0;
+    const dcb = Comm.allocDCB();
+    unwrap(Comm.GetCommState(this.#handle, dcb));
+    const dv = new Comm.DCBView(dcb);
+    dv.XonChar = 17;
+    dv.XoffChar = 19;
+    dv.ErrorChar = 0;
+    dv.EofChar = 26;
+    let bitfield = dv._bitfield;
+    bitfield = setbit(bitfield, fBinary, true);
+    bitfield = setbit(bitfield, fOutxDsrFlow, false);
+    bitfield = setbit(bitfield, fDtrControl0, false);
+    bitfield = setbit(bitfield, fDtrControl1, false);
+    bitfield = setbit(bitfield, fDsrSensitivity, false);
+    bitfield = setbit(bitfield, fErrorChar, false);
+    bitfield = setbit(bitfield, fNull, false);
+    bitfield = setbit(bitfield, fAbortOnError, false);
 
-    dcb.BaudRate = options.baudRate;
-    dcb.ByteSize = options.dataBits || DataBits.EIGHT;
-    dcb.StopBits = options.stopBits || StopBits.ONE;
-    dcb.Parity = options.parity || Parity.NONE;
-    flowControlToDcb(options.flowControl || FlowControl.NONE, dcb);
+    dv.BaudRate = options.baudRate;
+    dv.ByteSize = options.dataBits || DataBits.EIGHT;
+    dv.StopBits = options.stopBits || StopBits.ONE;
+    dv.Parity = options.parity || Parity.NONE;
+    flowControlToDcb(options.flowControl || FlowControl.NONE, dv);
+    Comm.SetCommState(this.#handle, dcb);
 
-    SetCommState(this.#handle, dcb);
+    this.#_dcb = dv;
 
     this.timeout = options.timeout ?? 0;
   }
 
+  get #dcb() {
+    unwrap(Comm.GetCommState(this.#handle, this.#_dcb.buffer));
+    return this.#_dcb;
+  }
+
+  set #dcb(dcb: Comm.DCBView) {
+    unwrap(Comm.SetCommState(this.#handle, dcb.buffer));
+  }
+
   get baudRate(): number {
-    const dcb = GetCommState(this.#handle);
-    return dcb.BaudRate;
+    return this.#dcb.BaudRate;
   }
 
   set baudRate(value: number) {
-    const dcb = GetCommState(this.#handle);
+    const dcb = this.#dcb;
     dcb.BaudRate = value;
-    SetCommState(this.#handle, dcb);
+    this.#dcb = dcb;
   }
 
   get dataBits(): DataBits {
-    const dcb = GetCommState(this.#handle);
-    return dcb.ByteSize;
+    return this.#dcb.ByteSize;
   }
 
   set dataBits(value: DataBits) {
-    const dcb = GetCommState(this.#handle);
+    const dcb = this.#dcb;
     dcb.ByteSize = value;
-    SetCommState(this.#handle, dcb);
+    this.#dcb = dcb;
   }
 
   set stopBits(value: StopBits) {
-    const dcb = GetCommState(this.#handle);
+    const dcb = this.#dcb;
     dcb.StopBits = value;
-    SetCommState(this.#handle, dcb);
+    this.#dcb = dcb;
   }
 
   get stopBits(): StopBits {
-    const dcb = GetCommState(this.#handle);
-    return dcb.StopBits;
+    return this.#dcb.StopBits;
   }
 
   get parity(): Parity {
-    const dcb = GetCommState(this.#handle);
-    return dcb.Parity;
+    return this.#dcb.Parity;
   }
 
   set parity(value: Parity) {
-    const dcb = GetCommState(this.#handle);
+    const dcb = this.#dcb;
     dcb.Parity = value;
-    SetCommState(this.#handle, dcb);
+    this.#dcb = dcb;
   }
 
   get flowControl(): FlowControl {
-    const dcb = GetCommState(this.#handle);
+    const dcb = this.#dcb;
     return dcbToFlowControl(dcb);
   }
 
   set flowControl(value: FlowControl) {
-    const dcb = GetCommState(this.#handle);
+    const dcb = this.#dcb;
     flowControlToDcb(value, dcb);
-    SetCommState(this.#handle, dcb);
+    this.#dcb = dcb;
   }
 
   get timeout() {
@@ -173,52 +207,59 @@ export class SerialPortWin implements SerialPort {
   }
 
   set timeout(ms: number) {
-    const timeouts = Struct(COMMTIMEOUTS);
-    timeouts.ReadTotalTimeoutConstant = ms;
-    SetCommTimeouts(this.#handle, timeouts);
+    const timeouts = Comm.allocCOMMTIMEOUTS({
+      ReadTotalTimeoutConstant: ms,
+    });
+    Comm.SetCommTimeouts(this.#handle, timeouts);
     this.#timeout = ms;
   }
 
   writeRequestToSend(level: boolean): void {
-    EscapeCommFunction(this.#handle, level ? 3 : 4);
+    Comm.EscapeCommFunction(this.#handle, level ? 3 : 4);
   }
 
   writeDataTerminalReady(level: boolean): void {
-    EscapeCommFunction(this.#handle, level ? 5 : 6);
+    Comm.EscapeCommFunction(this.#handle, level ? 5 : 6);
+  }
+
+  get #modemStatus() {
+    const status = new Uint32Array(1);
+    unwrap(
+      Comm.GetCommModemStatus(this.#handle, new Uint8Array(status.buffer)),
+    );
+    return status[0];
   }
 
   readClearToSend(): boolean {
-    return (GetCommModemStatus(this.#handle) & 0x0010) !== 0;
+    return (this.#modemStatus & 0x0010) !== 0;
   }
 
   readDataSetReady(): boolean {
-    return (GetCommModemStatus(this.#handle) & 0x0020) !== 0;
+    return (this.#modemStatus & 0x0020) !== 0;
   }
 
   readRingIndicator(): boolean {
-    return (GetCommModemStatus(this.#handle) & 0x0040) !== 0;
+    return (this.#modemStatus & 0x0040) !== 0;
   }
 
   readCarrierDetect(): boolean {
-    return (GetCommModemStatus(this.#handle) & 0x0080) !== 0;
+    return (this.#modemStatus & 0x0080) !== 0;
   }
 
   bytesToRead(): number {
-    const comstat = Struct(COMMSTAT);
     const errors = new Uint32Array(1);
-    ClearCommError(this.#handle, errors, comstat);
-    return comstat.cbInQue;
+    Comm.ClearCommError(this.#handle, new Uint8Array(errors.buffer), comstat);
+    return new Comm.COMSTATView(comstat).cbInQue;
   }
 
   bytesToWrite(): number {
-    const comstat = Struct(COMMSTAT);
     const errors = new Uint32Array(1);
-    ClearCommError(this.#handle, errors, comstat);
-    return comstat.cbOutQue;
+    Comm.ClearCommError(this.#handle, new Uint8Array(errors.buffer), comstat);
+    return new Comm.COMSTATView(comstat).cbOutQue;
   }
 
   clear(buffer: ClearBuffer): void {
-    PurgeComm(
+    Comm.PurgeComm(
       this.#handle,
       ({
         [ClearBuffer.INPUT]: 0x0001 | 0x0004,
@@ -229,45 +270,61 @@ export class SerialPortWin implements SerialPort {
   }
 
   setBreak(): void {
-    SetCommBreak(this.#handle);
+    Comm.SetCommBreak(this.#handle);
   }
 
   clearBreak(): void {
-    ClearCommBreak(this.#handle);
+    Comm.ClearCommBreak(this.#handle);
   }
 
   flush(): void {
-    FlushFileBuffers(this.#handle);
+    Fs.FlushFileBuffers(this.#handle);
   }
 
-  #pending = new Set<LPOVERLAPPED>();
+  #pending = new Set<AbortController>();
 
   async read(p: Uint8Array): Promise<number | null> {
     try {
-      const overlapped = Struct(OVERLAPPED);
-      ReadFile(this.#handle, p, overlapped);
-      this.#pending.add(overlapped);
-      await GetOverlappedResult(this.#handle, overlapped, true);
-      this.#pending.delete(overlapped);
-      return Number(overlapped.InternalHigh);
+      const controller = new AbortController();
+      const overlapped = new OverlappedPromise(this.#handle, controller.signal);
+      // const bytes = new Uint32Array(1);
+      Fs.ReadFile(
+        this.#handle,
+        p,
+        p.byteLength,
+        0, // new Uint8Array(bytes.buffer),
+        overlapped.buffer,
+      );
+      this.#pending.add(controller);
+      await overlapped;
+      this.#pending.delete(controller);
+      return Number(overlapped.internalHigh);
     } catch (e) {
       return null;
     }
   }
 
   async write(p: Uint8Array): Promise<number> {
-    const overlapped = Struct(OVERLAPPED);
-    WriteFile(this.#handle, p, overlapped);
-    this.#pending.add(overlapped);
-    await GetOverlappedResult(this.#handle, overlapped, true);
-    this.#pending.delete(overlapped);
-    return Number(overlapped.InternalHigh);
+    const controller = new AbortController();
+    const overlapped = new OverlappedPromise(this.#handle, controller.signal);
+    // const bytes = new Uint32Array(1);
+    Fs.WriteFile(
+      this.#handle,
+      p,
+      p.byteLength,
+      0, // new Uint8Array(bytes.buffer),
+      overlapped.buffer,
+    );
+    this.#pending.add(controller);
+    await overlapped;
+    this.#pending.delete(controller);
+    return Number(overlapped.internalHigh);
   }
 
   close(): void {
     for (const overlapped of this.#pending) {
-      CancelIoEx(this.#handle, overlapped);
+      overlapped.abort();
     }
-    CloseHandle(this.#handle);
+    Foundation.CloseHandle(this.#handle);
   }
 }
