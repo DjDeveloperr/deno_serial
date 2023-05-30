@@ -6,10 +6,16 @@
 
 Serial Port API for Deno with zero third party native dependencies.
 
+| Platform | `getPorts` | `open` |
+| -------- | ---------- | ------ |
+| Windows  | ✅         | ✅     |
+| macOS    | ✅         | ❌     |
+| Linux    | ❌         | ❌     |
+
 ## Usage
 
 ```ts
-import { open, getPorts } from "https://deno.land/x/serialport@0.1.0/mod.ts";
+import { getPorts, open } from "https://deno.land/x/serialport@0.1.0/mod.ts";
 
 const ports = getPorts();
 console.log("Ports:", ports);
@@ -25,4 +31,4 @@ port.close();
 
 Apache-2.0. Check [LICENSE](./LICENSE) for more information.
 
-Copyright © 2022 DjDeveloperr
+Copyright © 2022-2023 DjDeveloperr

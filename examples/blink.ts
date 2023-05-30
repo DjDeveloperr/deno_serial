@@ -1,6 +1,6 @@
-import { getPorts, open } from "../mod.ts";
+import { getPorts, open, USBPortInfo } from "../mod.ts";
 
-const portInfo = getPorts()[0];
+const portInfo = getPorts().find((port) => port.type === "USB") as USBPortInfo;
 if (!portInfo) {
   throw new Error("No serial ports found.");
 }
