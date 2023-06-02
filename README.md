@@ -4,13 +4,21 @@
 [![License](https://img.shields.io/github/license/DjDeveloperr/deno_serial)](https://github.com/DjDeveloperr/deno_serial/blob/master/LICENSE)
 [![Sponsor](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/DjDeveloperr)
 
-Serial Port API for Deno with zero third party native dependencies.
+Serial Port API for Deno with zero third-party native dependencies.
 
 | Platform | `getPorts` | `open` |
 | -------- | ---------- | ------ |
 | Windows  | ✅         | ✅     |
 | macOS    | ✅         | ❌     |
 | Linux    | ❌         | ❌     |
+
+## Try out
+
+Run the following to list all available ports:
+
+```sh
+deno run --unstable --allow-ffi https://deno.land/x/serialport@0.1.0/examples/print_ports.ts
+```
 
 ## Usage
 

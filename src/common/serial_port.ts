@@ -38,7 +38,7 @@ export enum ClearBuffer {
   ALL,
 }
 
-export interface SerialPort extends Deno.Reader, Deno.Writer {
+export interface SerialPort {
   readonly name?: string;
 
   baudRate: number;
@@ -47,6 +47,9 @@ export interface SerialPort extends Deno.Reader, Deno.Writer {
   parity: Parity;
   flowControl: FlowControl;
   timeout: number;
+
+  read(p: Uint8Array): Promise<number | null>;
+  write(p: Uint8Array): Promise<number>;
 
   writeRequestToSend(level: boolean): void;
   writeDataTerminalReady(level: boolean): void;

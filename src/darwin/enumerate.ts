@@ -1,7 +1,8 @@
 import iokit, { ioreturn, kIOSerialBSDServiceValue } from "./iokit.ts";
 import corefoundation, { createCFString } from "./corefoundation.ts";
-import { PortInfo } from "../common/port_info.ts";
 import { cString, deref, refptr } from "../common/util.ts";
+import { SerialPort, SerialPortInfo } from "../common/web_serial.ts";
+import { SerialPortDarwin } from "./serial_port.ts";
 
 const stringBuffer = new Uint8Array(256);
 
@@ -12,7 +13,6 @@ function readStringBuffer() {
 
 const kIOServiceClass = cString("IOService");
 const kIOUSBDeviceClassName = "IOUSBDevice";
-const bluetoothDeviceClassName = "IOBluetoothSerialClient";
 const usbDeviceClassName = "IOUSBHostDevice";
 const kCFNumberSInt8Type = 0;
 const kCFNumberSInt16Type = 1;
@@ -102,36 +102,31 @@ function getStringProperty(deviceType: Deno.PointerValue, name: string) {
   return readStringBuffer();
 }
 
-function getPortInfo(service: Deno.PointerValue, name: string): PortInfo {
+function getPortInfo(service: Deno.PointerValue, name: string): SerialPortInfo {
   const usbDevice = getParentDeviceByType(service, usbDeviceClassName) ??
     getParentDeviceByType(service, kIOUSBDeviceClassName);
 
   if (usbDevice) {
     return {
-      type: "USB",
       name,
-      vendorId: getIntProperty(usbDevice, "idVendor", kCFNumberSInt16Type) ?? 0,
-      productId: getIntProperty(usbDevice, "idProduct", kCFNumberSInt16Type) ??
+      usbVendorId: getIntProperty(usbDevice, "idVendor", kCFNumberSInt16Type) ??
         0,
+      usbProductId:
+        getIntProperty(usbDevice, "idProduct", kCFNumberSInt16Type) ??
+          0,
       manufacturer: getStringProperty(usbDevice, "USB Vendor Name") ?? "",
       friendlyName: getStringProperty(usbDevice, "USB Product Name") ?? "",
       serialNumber: getStringProperty(usbDevice, "USB Serial Number") ?? "",
     };
-  } else if (getParentDeviceByType(service, bluetoothDeviceClassName)) {
-    return {
-      type: "Bluetooth",
-      name,
-    };
   } else {
     return {
-      type: "PCI",
       name,
     };
   }
 }
 
-export function getPortsDarwin() {
-  const ports: PortInfo[] = [];
+export function getPortsDarwin(): SerialPort[] {
+  const ports: SerialPortInfo[] = [];
 
   const matchingServices = iokit.IOServiceMatching(kIOSerialBSDServiceValue);
 
@@ -191,5 +186,39 @@ export function getPortsDarwin() {
     service = iokit.IOIteratorNext(classesToMatch);
   }
 
-  return ports;
+  return ports.map((info) => new SerialPortDarwin(info));
 }
+
+const port = getPortsDarwin()[2];
+
+await port.open({ baudRate: 9600 });
+
+async function pipeToConsole(signal: AbortSignal) {
+  for await (const chunk of port.readable!) {
+    if (signal.aborted) {
+      break;
+    }
+    await Deno.stdout.write(chunk);
+  }
+}
+
+const abortController = new AbortController();
+const pipe = pipeToConsole(abortController.signal);
+
+let on = false;
+
+const loop = setInterval(async () => {
+  const writer = port.writable!.getWriter();
+  on = !on;
+  await writer.write(new Uint8Array([on ? 1 : 2])).catch(console.error);
+  writer.releaseLock();
+}, 500);
+
+setTimeout(async () => {
+  clearInterval(loop);
+  console.log("closing");
+  abortController.abort();
+  // await pipe;
+  await port.close();
+  console.log("closed");
+}, 2000);

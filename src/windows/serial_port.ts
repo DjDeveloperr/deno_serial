@@ -12,7 +12,7 @@ import { Comm, Foundation, Fs, OverlappedPromise, unwrap } from "./deps.ts";
 // deno-fmt-ignore
 const         fBinary = 0b0000_0000_0000_0001;
 // deno-fmt-ignore
-const         fParity = 0b0000_0000_0000_0010;
+// const         fParity = 0b0000_0000_0000_0010;
 // deno-fmt-ignore
 const    fOutxCtsFlow = 0b0000_0000_0000_0100;
 // deno-fmt-ignore
@@ -36,7 +36,7 @@ const    fRtsControl0 = 0b0001_0000_0000_0000;
 // deno-fmt-ignore
 const    fRtsControl1 = 0b0010_0000_0000_0000;
 // deno-fmt-ignore
-const     fRtsControl = 0b0011_0000_0000_0000;
+// const     fRtsControl = 0b0011_0000_0000_0000;
 // deno-fmt-ignore
 const   fAbortOnError = 0b0100_0000_0000_0000;
 
@@ -106,7 +106,7 @@ export class SerialPortWin implements SerialPort {
       "\\\\.\\" + options.name,
       Fs.FILE_GENERIC_READ | Fs.FILE_GENERIC_WRITE,
       0,
-      0,
+      null,
       Fs.OPEN_EXISTING,
       Fs.FILE_ATTRIBUTE_NORMAL | Fs.FILE_FLAG_OVERLAPPED,
       null,
@@ -292,14 +292,14 @@ export class SerialPortWin implements SerialPort {
         this.#handle,
         p,
         p.byteLength,
-        0, // new Uint8Array(bytes.buffer),
+        null, // new Uint8Array(bytes.buffer),
         overlapped.buffer,
       );
       this.#pending.add(controller);
       await overlapped;
       this.#pending.delete(controller);
       return Number(overlapped.internalHigh);
-    } catch (e) {
+    } catch (_) {
       return null;
     }
   }
@@ -312,7 +312,7 @@ export class SerialPortWin implements SerialPort {
       this.#handle,
       p,
       p.byteLength,
-      0, // new Uint8Array(bytes.buffer),
+      null, // new Uint8Array(bytes.buffer),
       overlapped.buffer,
     );
     this.#pending.add(controller);
