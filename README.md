@@ -9,7 +9,7 @@ Serial Port API for Deno with zero third-party native dependencies.
 | Platform | `getPorts` | `open` |
 | -------- | ---------- | ------ |
 | Windows  | ✅         | ✅     |
-| macOS    | ✅         | ❌     |
+| macOS    | ❌         | ❌     |
 | Linux    | ❌         | ❌     |
 
 ## Try out
@@ -17,8 +17,10 @@ Serial Port API for Deno with zero third-party native dependencies.
 Run the following to list all available ports:
 
 ```sh
-deno run --unstable --allow-ffi https://deno.land/x/serialport@0.1.0/examples/print_ports.ts
+deno run --unstable --allow-ffi -r https://raw.githubusercontent.com/DjDeveloperr/deno_serial/main/examples/print_ports.ts
 ```
+
+NOTE: Not yet published to deno.land/x as not all platforms are supported yet.
 
 ## Usage
 
