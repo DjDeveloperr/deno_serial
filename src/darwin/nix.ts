@@ -107,18 +107,31 @@ const nix = Deno.dlopen("libSystem.dylib", {
 
 export default nix;
 
-export function unwrap(result: number) {
-  if (result < 0) {
-    const lib = Deno.dlopen("libSystem.dylib", {
-      errno: {
-        type: "i32",
-      },
-    });
-    const errno = lib.symbols.errno;
-    lib.close();
+export class UnixError extends Error {
+  errno: number;
+  constructor(errno: number) {
     const str = nix.strerror(errno);
     const jstr = Deno.UnsafePointerView.getCString(str!);
-    throw new Error(`Error: ${errno}: ${jstr}`);
+    super(`UnixError: ${errno}: ${jstr}`);
+    this.errno = errno;
+  }
+}
+
+export function unwrap(result: number, error?: number) {
+  if (result < 0) {
+    let errno;
+    if (error !== undefined) {
+      errno = error;
+    } else {
+      const lib = Deno.dlopen("libSystem.dylib", {
+        errno: {
+          type: "i32",
+        },
+      });
+      errno = lib.symbols.errno;
+      lib.close();
+    }
+    throw new UnixError(errno);
   }
   return result;
 }

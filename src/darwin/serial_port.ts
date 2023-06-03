@@ -1,6 +1,6 @@
 import { cString, Deferred } from "../common/util.ts";
 import { AIOCB } from "./aio.ts";
-import nix, { unwrap } from "./nix.ts";
+import nix, { UnixError, unwrap } from "./nix.ts";
 import { Termios } from "./termios.ts";
 import {
   SerialOptions,
@@ -67,7 +67,7 @@ export class SerialPortDarwin extends EventTarget implements SerialPort {
 
     const fd = await nix.open(
       cString(this.#info.name),
-      131078,
+      0x802,
       0,
     );
     unwrap(fd);
@@ -129,7 +129,20 @@ export class SerialPortDarwin extends EventTarget implements SerialPort {
           const aio = new AIOCB(this.#fd!, buffer);
           aio.read();
           this.#aiocbs.add(aio);
-          await aio.suspend();
+          while (true) {
+            try {
+              await aio.suspend(0, 50);
+            } catch (e) {
+              if (e instanceof UnixError) {
+                if (e.errno === 36) {
+                  continue;
+                } else {
+                  break;
+                }
+              }
+            }
+            break;
+          }
           this.#aiocbs.delete(aio);
           return aio.return();
         };
@@ -256,41 +269,42 @@ export class SerialPortDarwin extends EventTarget implements SerialPort {
 
     console.log(unwrap(nix.aio_cancel(this.#fd!, null)));
 
-    const pendingClosePromise = new Deferred();
+    // const pendingClosePromise = new Deferred();
 
-    if (this.#readable === null && this.#writable === null) {
-      pendingClosePromise.resolve();
-    } else {
-      this.#pendingClosePromise = pendingClosePromise;
-    }
+    // if (this.#readable === null && this.#writable === null) {
+    //   pendingClosePromise.resolve();
+    // } else {
+    //   this.#pendingClosePromise = pendingClosePromise;
+    // }
 
-    const cancelPromise = this.#readable
-      ? this.#readable.cancel()
-      : Promise.resolve();
-    const abortPromise = this.#writable
-      ? this.#writable.abort()
-      : Promise.resolve();
+    // const cancelPromise = this.#readable
+    //   ? this.#readable.cancel()
+    //   : Promise.resolve();
+    // const abortPromise = this.#writable
+    //   ? this.#writable.abort()
+    //   : Promise.resolve();
 
     this.#state = "closing";
 
-    return Promise.all([cancelPromise, abortPromise, pendingClosePromise]).then(
-      () => {
-        unwrap(
-          nix.ioctl(
-            this.#fd!,
-            536900622,
-          ),
-        );
-        unwrap(nix.close(this.#fd!));
-        this.#state = "closed";
-        this.#readFatal = this.#writeFatal = false;
-        this.#pendingClosePromise = undefined;
-      },
-      (r) => {
-        this.#pendingClosePromise = undefined;
-        throw r;
-      },
-    );
+    return Promise.all([/*cancelPromise, abortPromise, pendingClosePromise*/])
+      .then(
+        () => {
+          unwrap(
+            nix.ioctl(
+              this.#fd!,
+              536900622,
+            ),
+          );
+          unwrap(nix.close(this.#fd!));
+          this.#state = "closed";
+          this.#readFatal = this.#writeFatal = false;
+          this.#pendingClosePromise = undefined;
+        },
+        (r) => {
+          this.#pendingClosePromise = undefined;
+          throw r;
+        },
+      );
   }
 
   [Symbol.for("Deno.customInspect")](

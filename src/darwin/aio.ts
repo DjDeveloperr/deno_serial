@@ -25,7 +25,7 @@ export class AIOCB {
 
   async suspend(timeout1?: number, timeout2?: number) {
     const result = await nix.aio_suspend(
-      new Uint8Array(
+      this.data ?? new Uint8Array(
         new BigUint64Array([
           BigInt(Deno.UnsafePointer.value(Deno.UnsafePointer.of(this.data))),
         ]).buffer,
@@ -37,7 +37,7 @@ export class AIOCB {
         )
         : null,
     );
-    unwrap(result);
+    unwrap(result, this.error());
   }
 
   cancel() {
