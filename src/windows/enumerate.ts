@@ -123,7 +123,7 @@ export function getPortsWin() {
       null,
       Di.DIGCF_PRESENT,
     )!;
-    unwrap(Number(devInfoList));
+    unwrap(Number(Deno.UnsafePointer.value(devInfoList)));
 
     for (let i = 0; true; i++) {
       const result = Di.SetupDiEnumDeviceInfo(devInfoList, i, devInfoData);

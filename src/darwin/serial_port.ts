@@ -261,13 +261,28 @@ export class SerialPortDarwin extends EventTarget implements SerialPort {
       throw new DOMException("Port is not open", "InvalidStateError");
     }
 
-    for (const aio of this.#aiocbs) {
-      console.log(nix.aio_error(aio.data));
-      console.log(nix.aio_return(aio.data));
-      console.log(nix.aio_cancel(this.#fd!, aio.data));
-    }
+    console.log("nonexclusive");
+    unwrap(
+      nix.ioctl(
+        this.#fd!,
+        536900622,
+      ),
+    );
+    // set nonblock
+    unwrap(nix.fcntl(this.#fd!, 4, 2048));
+    console.log("closing??");
+    unwrap(nix.close(this.#fd!));
+    console.log("closed??");
 
-    console.log(unwrap(nix.aio_cancel(this.#fd!, null)));
+    return Promise.resolve();
+
+    // for (const aio of this.#aiocbs) {
+    //   console.log(nix.aio_error(aio.data));
+    //   console.log(nix.aio_return(aio.data));
+    //   console.log(nix.aio_cancel(this.#fd!, aio.data));
+    // }
+
+    // console.log(unwrap(nix.aio_cancel(this.#fd!, null)));
 
     // const pendingClosePromise = new Deferred();
 
@@ -284,27 +299,20 @@ export class SerialPortDarwin extends EventTarget implements SerialPort {
     //   ? this.#writable.abort()
     //   : Promise.resolve();
 
-    this.#state = "closing";
+    // this.#state = "closing";
 
-    return Promise.all([/*cancelPromise, abortPromise, pendingClosePromise*/])
-      .then(
-        () => {
-          unwrap(
-            nix.ioctl(
-              this.#fd!,
-              536900622,
-            ),
-          );
-          unwrap(nix.close(this.#fd!));
-          this.#state = "closed";
-          this.#readFatal = this.#writeFatal = false;
-          this.#pendingClosePromise = undefined;
-        },
-        (r) => {
-          this.#pendingClosePromise = undefined;
-          throw r;
-        },
-      );
+    // return Promise.all([cancelPromise, abortPromise, pendingClosePromise])
+    //   .then(
+    //     () => {
+    //       this.#state = "closed";
+    //       this.#readFatal = this.#writeFatal = false;
+    //       this.#pendingClosePromise = undefined;
+    //     },
+    //     (r) => {
+    //       this.#pendingClosePromise = undefined;
+    //       throw r;
+    //     },
+    //   );
   }
 
   [Symbol.for("Deno.customInspect")](
